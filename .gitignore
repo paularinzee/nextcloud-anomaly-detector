@@ -1,0 +1,13 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+detector/state/
+detector/audit/
+detector/*.log
+detector/state.json
+logs/
+.idea/
+.vscode/
+.DS_Store

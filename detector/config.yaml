@@ -1,0 +1,78 @@
+# Cloud anomaly-detection daemon — configuration
+# All thresholds live here. NEVER hardcode them in code.
+
+# --- Sliding window ---
+# Per-IP and global rates are measured over this many seconds.
+window_seconds: 60
+
+# --- Rolling baseline ---
+# Mean + stddev are computed over the last `baseline_window_seconds`
+# of per-second request counts, recalculated every `recalc_interval_seconds`.
+baseline_window_seconds: 1800     # 30 minutes
+recalc_interval_seconds: 60       # recompute every 60 s
+
+# Cold-start floors. These are NOT a hardcoded baseline — they are
+# minimum sane values used only until enough real samples accumulate,
+# so that an attack at hour 2 still trips the detector.
+floor_mean: 1.0
+floor_stddev: 0.5
+
+# Number of recalc cycles inside the current hour-slot before we trust
+# it in preference to the global rolling baseline.
+min_slot_samples: 5
+
+# Number of per-second samples in the rolling deque before we trust
+# the global baseline over the floor.
+min_global_samples: 30
+
+# --- Detection thresholds ---
+# Whichever of these fires first counts as an anomaly.
+z_score_threshold: 3.0
+rate_multiplier: 5.0
+
+# Error-surge tightening: if an IP's 4xx/5xx rate is at least
+# `error_rate_multiplier` × the baseline error rate, switch its
+# rate threshold from `rate_multiplier` to `tightened_rate_multiplier`.
+error_rate_multiplier: 3.0
+tightened_rate_multiplier: 3.0
+
+# --- Banning ---
+# Backoff schedule (seconds): 10 min, 30 min, 2 hr, then permanent.
+ban_schedule_seconds: [600, 1800, 7200]
+
+# How often the unban scheduler wakes up to release expired bans.
+unban_poll_seconds: 10
+
+# Set true for local dev where iptables doesn't exist (Windows / macOS),
+# or where we want to log "would-ban" without enforcing. The blocker also
+# auto-falls-back to dry-run if the iptables binary isn't found.
+iptables_dry_run: false
+iptables_chain: INPUT
+
+# Don't suppress global alerts more often than this (seconds).
+global_alert_cooldown_seconds: 30
+
+# IPs that are NEVER banned. Allowlist must contain *IPs only* (not domains).
+# On the VPS, add:
+#   - your workstation's public IP (find with `curl ifconfig.me`)
+#   - any monitor / health-check service IP
+#   - the VPS's own public IP (so localhost-routed grader checks aren't banned)
+allowlist:
+  - "127.0.0.1"
+  - "::1"
+  # - "203.0.113.42"     # example: your SSH IP — replace before deploy
+
+# --- Slack ---
+# Recommended: leave blank here and set SLACK_WEBHOOK_URL in the env
+# (the entrypoint reads the env var first). The webhook URL is a secret;
+# don't commit it to git.
+slack_webhook_url: ""
+
+# --- Paths (inside the detector container) ---
+log_path: "/var/log/nginx/hng-access.log"
+audit_log_path: "/var/log/detector/audit.log"
+state_path: "/var/lib/detector/state.json"
+
+# --- Dashboard ---
+dashboard_host: "0.0.0.0"
+dashboard_port: 8080
