@@ -1,0 +1,99 @@
+name: hng-detector
+
+# IMPORTANT: the volume is named exactly "HNG-nginx-logs" as required by
+# the spec. Nginx writes to it; nextcloud and the detector mount it RO.
+volumes:
+  HNG-nginx-logs:
+  nextcloud-data:
+  nextcloud-db:
+  detector-state:
+  detector-audit:
+  certbot-certs:
+  certbot-www:
+
+networks:
+  hng-net:
+    driver: bridge
+
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    networks: [hng-net]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpw}
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nextcloud
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:-ncpw}
+    volumes:
+      - nextcloud-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nextcloud:
+    # DO NOT change this image — provided by the task.
+    image: kefaslungu/hng-nextcloud:latest
+    restart: unless-stopped
+    networks: [hng-net]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ncpw}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-localhost}
+      # Trust the nginx container as a proxy so Nextcloud honours X-Forwarded-For.
+      TRUSTED_PROXIES: 0.0.0.0/0
+    volumes:
+      - nextcloud-data:/var/www/html
+      # Spec: Nextcloud also mounts the log volume read-only.
+      - HNG-nginx-logs:/var/log/nginx:ro
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    networks: [hng-net]
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - nextcloud
+    # `host.docker.internal` resolves automatically on Docker Desktop
+    # (Mac/Windows). On Linux it requires this explicit mapping. The nginx
+    # config uses it as the upstream for the detector dashboard.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - HNG-nginx-logs:/var/log/nginx
+      # Cert volumes are populated by certbot in production; harmless if empty.
+      - certbot-certs:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+
+  detector:
+    build: ./detector
+    restart: unless-stopped
+    networks: [hng-net]
+    # NET_ADMIN/NET_RAW lets us call iptables. On a bridge network this
+    # only affects the container's own iptables — fine for local dev where
+    # we run in dry-run mode anyway. For real enforcement on the Linux VPS,
+    # switch this service to `network_mode: host` (see README).
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - "8080:8080"
+    environment:
+      # Override the YAML config without rebuilding. Pulled from .env.
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    volumes:
+      - HNG-nginx-logs:/var/log/nginx:ro
+      - detector-state:/var/lib/detector
+      - detector-audit:/var/log/detector
+    depends_on:
+      - nginx

@@ -1,0 +1,40 @@
+# Production override — apply on top of docker-compose.yml on the Linux VPS:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What this changes:
+#   - Detector switches to `network_mode: host` so its iptables rules apply to
+#     real inbound traffic (impossible from a bridge network).
+#   - The detector's port mapping and bridge attachment are removed (host-mode
+#     ignores both and would emit warnings).
+#   - Adds a one-shot `certbot` service for obtaining the Let's Encrypt cert.
+#     It is gated behind the `init` profile so it doesn't start with `up`.
+#
+# Run certbot once:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile init run --rm certbot
+# Then uncomment the TLS server block in nginx/nginx.conf and reload nginx:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml exec nginx nginx -s reload
+
+services:
+  detector:
+    network_mode: host
+    # The fields below are reset because they're meaningless under host networking.
+    # Requires Docker Compose v2.20+ for `!reset`.
+    networks: !reset null
+    ports: !reset null
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["init"]
+    volumes:
+      - certbot-certs:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Edit the email below to one you control. The cert will be issued for
+    # devops.hng.credianlab.xyz; nginx must already be running and reachable
+    # on port 80 at that domain so the HTTP-01 challenge succeeds.
+    command: >-
+      certonly --webroot
+      --webroot-path /var/www/certbot
+      --email admin@credianlab.xyz
+      --agree-tos --no-eff-email --non-interactive
+      -d devops.hng.credianlab.xyz
