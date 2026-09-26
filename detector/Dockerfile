@@ -6,12 +6,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# iptables is required by the blocker. ca-certificates is needed for Slack HTTPS.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends iptables ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+# Copy the requirements file into the container first
 COPY requirements.txt .
+
 # Install only the runtime Python dependencies declared for the detector daemon.
 RUN pip install --no-cache-dir -r requirements.txt
 
